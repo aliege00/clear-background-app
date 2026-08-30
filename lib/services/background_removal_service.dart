@@ -5,46 +5,38 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:tflite_flutter/tflite_flutter.dart';
 
-// ─────────────────────────────────────────────────────────────
-// Not: tflite_flutter Interpreter'ı isolate içinde çalıştırılamaz
-// (FFI kısıtı). Bu yüzden isolate'e ham görüntü verisini gönderip
-// sonucu geri alıyoruz. Model inference, ana isolate'de ama
-// görsel decode/encode işlemleri isolate'te yapılıyor.
-// Gerçek model init'i main isolate'te, ağır görsel işlemleri
-// compute() ile workeredale ediyoruz.
-// ─────────────────────────────────────────────────────────────
-
+/// ─────────────────────────────────────────────────────────────
+/// Arka plan kaldırma servisi — tflite_flutter ile.
+///
+/// Interpreter FFI kısıtı nedeniyle isolate içinde çalıştırılamaz.
+/// Mimari:
+///   1) compute() → görseli decode et, 512×512 float32 tensor üret
+///   2) ana thread → Interpreter.run() ile model inference
+///   3) compute() → alpha maskesini orijinal görsele uygula, PNG encode
+/// ─────────────────────────────────────────────────────────────
 class BackgroundRemovalService extends ChangeNotifier {
-  // tflite_flutter Interpreter TODO: model yükleme
+  Interpreter? _interpreter;
   bool _isModelLoaded = false;
   bool _isProcessing = false;
   String? _error;
-  String _modelName = 'U2Net-Lite (TFLite)';
-  String _modelInputSize = '512×512';
-  String _modelQuantization = 'Float32';
 
   bool get isModelLoaded => _isModelLoaded;
   bool get isProcessing => _isProcessing;
   String? get error => _error;
-  String get modelName => _modelName;
-  String get modelInputSize => _modelInputSize;
-  String get modelQuantization => _modelQuantization;
+  String get modelName => 'U2Net-Lite (TFLite)';
+  String get modelInputSize => '512×512';
+  String get modelQuantization => 'Float32';
 
-  /// Modeli yükle — uygulama başlangıcında bir kez çağrılır.
+  /// Modeli belleğe yükle — uygulama başlangıcında bir kez çağrılır.
   Future<void> loadModel() async {
     try {
-      // TODO: tflite_flutter Interpreter.fromAsset('u2net_lite.tflite')
-      // Gerçek implementasyonda:
-      //
-      // import 'package:tflite_flutter/tflite_flutter.dart';
-      // late Interpreter _interpreter;
-      // _interpreter = await Interpreter.fromAsset('u2net_lite.tflite');
-      //
+      _interpreter = await Interpreter.fromAsset(
+        'u2net_lite.tflite',
+        options: InterpreterOptions()..threads = 4,
+      );
       _isModelLoaded = true;
-      _modelName = 'U2Net-Lite (TFLite)';
-      _modelInputSize = '512×512';
-      _modelQuantization = 'Float32';
       notifyListeners();
     } catch (e) {
       _error = 'Model yüklenemedi: $e';
@@ -53,27 +45,40 @@ class BackgroundRemovalService extends ChangeNotifier {
     }
   }
 
-  /// Arka planı kaldır — ağır görsel işlemleri isolate'te çalışır.
+  /// Arka planı kaldır — 3 aşamalı pipeline.
   Future<File> removeBackground(File imageFile) async {
+    if (_interpreter == null) {
+      throw Exception('Model yüklenmedi');
+    }
+
     _isProcessing = true;
     _error = null;
     notifyListeners();
 
     try {
-      // 1. Görseli encode edip isolate'e gönder
+      // Aşama 1: Görseli decode et, modele uygun tensor üret (isolate)
       final inputBytes = await imageFile.readAsBytes();
+      final preprocessed = await compute(
+        _preprocessImage,
+        _PreprocessParams(imageBytes: inputBytes, inputSize: 512),
+      );
 
-      // 2. İşlemi isolate'te çalıştır
+      // Aşama 2: Model inference (ana thread — FFI kısıtı)
+      final maskOutput = _runInference(preprocessed.tensor);
+
+      // Aşama 3: Maskeyi orijinal görsele uygula, PNG encode et (isolate)
       final resultBytes = await compute(
-        _processImageIsolate,
-        _IsolateParams(
-          imageBytes: inputBytes,
-          modelInputSize: 512,
-          maxProcessDim: 1024,
+        _postprocessImage,
+        _PostprocessParams(
+          originalBytes: inputBytes,
+          mask: maskOutput,
+          inputSize: 512,
+          originalWidth: preprocessed.originalWidth,
+          originalHeight: preprocessed.originalHeight,
         ),
       );
 
-      // 3. Sonucu dosyaya yaz
+      // Sonucu diske yaz
       final appDir = await getApplicationDocumentsDirectory();
       final outputPath = p.join(
         appDir.path,
@@ -93,66 +98,134 @@ class BackgroundRemovalService extends ChangeNotifier {
     }
   }
 
+  /// TFLite model inference — ana isolate'de çalışır (FFI).
+  Float32List _runInference(Float32List inputTensor) {
+    final inputSize = 512;
+    final outputSize = inputSize * inputSize;
+
+    // Model girdisi: [1, 512, 512, 3] Float32
+    final input = inputTensor.reshape([1, inputSize, inputSize, 3]);
+
+    // Model çıktısı: [1, 512, 512, 1] Float32 (alpha maskesi)
+    final output = List.filled(outputSize, 0.0)
+        .reshape([1, inputSize, inputSize, 1]);
+
+    _interpreter!.run(input, output);
+
+    // 3D→1D düzleştir
+    return Float32List.fromList(
+      (output[0] as List<List<List<double>>>)
+          .expand((row) => row)
+          .expand((pixel) => pixel)
+          .toList(),
+    );
+  }
+
   void reset() {
     _error = null;
     _isProcessing = false;
     notifyListeners();
   }
+
+  @override
+  void dispose() {
+    _interpreter?.close();
+    super.dispose();
+  }
 }
 
-// ── Isolated Image Processing ────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// ISOLATE FONKSİYONLARI (compute() içinde çalışır)
+// ══════════════════════════════════════════════════════════════
 
-class _IsolateParams {
+class _PreprocessParams {
   final Uint8List imageBytes;
-  final int modelInputSize;
-  final int maxProcessDim;
-
-  _IsolateParams({
-    required this.imageBytes,
-    required this.modelInputSize,
-    required this.maxProcessDim,
-  });
+  final int inputSize;
+  _PreprocessParams({required this.imageBytes, required this.inputSize});
 }
 
-/// Bu fonksiyon compute() içinde, ayrı isolate'te çalışır.
-/// Ana thread'i hiç bloklemez.
-Uint8List _processImageIsolate(_IsolateParams params) {
-  // 1. Görseli decode et
+class _PreprocessResult {
+  final Float32List tensor;
+  final int originalWidth;
+  final int originalHeight;
+  _PreprocessResult(this.tensor, this.originalWidth, this.originalHeight);
+}
+
+/// Aşama 1: Görseli decode → resize → float32 tensor [1, H, W, 3].
+_PreprocessResult _preprocessImage(_PreprocessParams params) {
   final original = img.decodeImage(params.imageBytes);
   if (original == null) throw Exception('Görsel decode edilemedi');
 
-  // 2. Model için yeniden boyutlandır (uzun kenar ~1024px)
-  final resized = _resizeForModel(original, params.maxProcessDim);
+  final origW = original.width;
+  final origH = original.height;
 
-  // 3. Model input boyutuna yeniden boyutlandır
-  final modelInput = img.copyResize(
-    resized,
-    width: params.modelInputSize,
-    height: params.modelInputSize,
+  // Uzun kenarı 1024px'e küçült (performans)
+  final intermediate = _resizeKeepAspect(original, 1024);
+
+  // Model input boyutuna yeniden boyutlandır
+  final resized = img.copyResize(
+    intermediate,
+    width: params.inputSize,
+    height: params.inputSize,
     interpolation: img.Interpolation.linear,
   );
 
-  // 4. Model inference — U2Net-lite hardcoded mask üretimi
-  //    (Gerçek implementasyonda tflite_flutter Interpreter.run() kullanılır)
-  //
-    // Gerçek kullanım:
-    //   final input = _imageToFloat32(modelInput, params.modelInputSize);
-    //   final output = List.filled(params.modelInputSize * params.modelInputSize, 0.0)
-    //       .reshape([1, params.modelInputSize, params.modelInputSize, 1]);
-    //   _interpreter.run(input, output);
-    //   final mask = output[0].flatten();
-    //
-  final mask = _generateSegmentationMask(modelInput, params.modelInputSize);
+  // Float32 tensor [H, W, 3] → flatten
+  final tensor = _imageToFloat32(resized, params.inputSize);
 
-  // 5. Maskeyi orijinal çözünürlüğe uygula + şeffaf PNG oluştur
-  final result = _applyMaskToOriginal(original, mask, params.modelInputSize);
+  return _PreprocessResult(tensor, origW, origH);
+}
 
-  // 6. PNG olarak encode et
+class _PostprocessParams {
+  final Uint8List originalBytes;
+  final Float32List mask;
+  final int inputSize;
+  final int originalWidth;
+  final int originalHeight;
+  _PostprocessParams({
+    required this.originalBytes,
+    required this.mask,
+    required this.inputSize,
+    required this.originalWidth,
+    required this.originalHeight,
+  });
+}
+
+/// Aşama 3: Orijinal görsele maskeyi uygula → RGBA PNG encode.
+Uint8List _postprocessImage(_PostprocessParams params) {
+  final original = img.decodeImage(params.originalBytes);
+  if (original == null) throw Exception('Orijinal görsel decode edilemedi');
+
+  final result = img.Image(
+    width: params.originalWidth,
+    height: params.originalHeight,
+    numChannels: 4,
+  );
+
+  final scaleX = params.originalWidth / params.inputSize;
+  final scaleY = params.originalHeight / params.inputSize;
+
+  for (var y = 0; y < params.originalHeight; y++) {
+    for (var x = 0; x < params.originalWidth; x++) {
+      final maskX = (x / scaleX).floor().clamp(0, params.inputSize - 1);
+      final maskY = (y / scaleY).floor().clamp(0, params.inputSize - 1);
+      final maskVal = params.mask[maskY * params.inputSize + maskX];
+      final alpha = maskVal > 0.5 ? 255 : 0;
+
+      final src = original.getPixel(x, y);
+      result.setPixelRgba(
+        x, y,
+        src.r.toInt(), src.g.toInt(), src.b.toInt(), alpha,
+      );
+    }
+  }
+
   return Uint8List.fromList(img.encodePng(result));
 }
 
-/// Orijinal görseli model için optimize eder (uzun kenar maxDim'e küçültür).
-img.Image _resizeForModel(img.Image image, int maxDim) {
+// ── Yardımcı Fonksiyonlar ─────────────────────────────────
+
+img.Image _resizeKeepAspect(img.Image image, int maxDim) {
   if (image.width <= maxDim && image.height <= maxDim) return image;
   final ratio = min(maxDim / image.width, maxDim / image.height);
   return img.copyResize(
@@ -163,7 +236,6 @@ img.Image _resizeForModel(img.Image image, int maxDim) {
   );
 }
 
-/// Resimden ham float tensor oluşturur [H, W, 3].
 Float32List _imageToFloat32(img.Image image, int size) {
   final tensor = Float32List(size * size * 3);
   var idx = 0;
@@ -176,58 +248,4 @@ Float32List _imageToFloat32(img.Image image, int size) {
     }
   }
   return tensor;
-}
-
-/// Yer tutucu segmentasyon maskesi (gerçek model inference yerine kullanılır).
-/// Gerçek kullanımda tflite_flutter Interpreter çıktısıyla değiştirilmelidir.
-Float32List _generateSegmentationMask(img.Image image, int size) {
-  final mask = Float32List(size * size);
-  // Basit merkez bazlı segmentasyon: görselin ortasındaki parlak bölgeleri
-  // ön plan olarak algılar. Gerçek U2Net modeli çok daha doğru sonuç verir.
-  final cx = size / 2.0;
-  final cy = size / 2.0;
-  final maxDist = sqrt(cx * cx + cy * cy);
-
-  for (var y = 0; y < size; y++) {
-    for (var x = 0; x < size; x++) {
-      final pixel = image.getPixel(x, y);
-      final brightness = (pixel.r + pixel.g + pixel.b) / (3.0 * 255.0);
-      final dx = x - cx;
-      final dy = y - cy;
-      final distFactor = 1.0 - (sqrt(dx * dx + dy * dy) / maxDist);
-      final combined = (brightness * 0.5 + distFactor * 0.5);
-      mask[y * size + x] = combined > 0.35 ? 1.0 : 0.0;
-    }
-  }
-  return mask;
-}
-
-/// Maskeyi orijinal çözünürlükteki görsele uygulayarak şeffaf PNG üretir.
-img.Image _applyMaskToOriginal(
-  img.Image original,
-  Float32List mask,
-  int inputSize,
-) {
-  final result = img.Image(
-    width: original.width,
-    height: original.height,
-    numChannels: 4,
-  );
-
-  final scaleX = original.width / inputSize;
-  final scaleY = original.height / inputSize;
-
-  for (var y = 0; y < original.height; y++) {
-    for (var x = 0; x < original.width; x++) {
-      final maskX = (x / scaleX).floor().clamp(0, inputSize - 1);
-      final maskY = (y / scaleY).floor().clamp(0, inputSize - 1);
-      final maskVal = mask[maskY * inputSize + maskX];
-      final alpha = maskVal > 0.5 ? 255 : 0;
-
-      final src = original.getPixel(x, y);
-      result.setPixelRgba(x, y, src.r.toInt(), src.g.toInt(), src.b.toInt(), alpha);
-    }
-  }
-
-  return result;
 }

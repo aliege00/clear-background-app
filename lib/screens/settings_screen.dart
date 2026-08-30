@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -257,14 +256,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _devRow(
                 icon: Icons.memory,
                 label: 'RAM Kullanımı',
-                trailing: FutureBuilder<int>(
+                trailing: FutureBuilder<String>(
                   future: _getRamUsage(),
                   builder: (ctx, snap) {
-                    final mb = snap.data != null
-                        ? '${(snap.data! / 1024 / 1024).toStringAsFixed(1)} MB'
-                        : '—';
                     return Text(
-                      mb,
+                      snap.data ?? '—',
                       style: TextStyle(
                         fontSize: 12, fontFamily: 'monospace',
                         color: isDark ? Colors.white38 : Colors.black26,
@@ -312,16 +308,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Cihazın tahmini RAM kullanımını döndürür.
-  Future<int> _getRamUsage() async {
+  /// Cihazın RAM kullanımını platform kanalıyla alır.
+  Future<String> _getRamUsage() async {
     try {
       const channel = MethodChannel('com.arkaplan.app/memory');
       final result = await channel.invokeMethod<int>('getRamUsage');
-      return result ?? 0;
+      if (result != null && result > 0) {
+        return '${(result / 1024 / 1024).toStringAsFixed(1)} MB';
+      }
     } catch (e) {
-      // Platform kanalı yoksa tahmini değer
-      return ProcessInfo.currentRss;
+      // Platform kanalı henüz yoksa
     }
+    return 'Bilgi mevcut değil';
   }
 
   // ══════════════════════════════════════════════════════════
