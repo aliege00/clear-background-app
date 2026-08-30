@@ -6,14 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0F0F14"
+      "backgroundColor": "#1A1A2E"
     },
-    "assetBundlePatterns": ["**/*"],
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.arkaplan.app",
       "config": {
         "googleMobileAdsAppId": "ca-app-pub-3940256099942544~1458002511"
@@ -24,23 +22,28 @@
       }
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0F0F14"
-      },
       "package": "com.arkaplan.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#1A1A2E"
+      },
       "config": {
         "googleMobileAdsAppId": "ca-app-pub-3940256099942544~3347511713"
       },
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE"]
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
     },
     "plugins": [
       "expo-router",
       [
         "expo-image-picker",
         {
-          "photosPermission": "Arka Plan, galerinizden fotoğraf seçmek için izin ister.",
+          "photosPermission": "Arka Plan, galerinizden fotoğraf seçmek için fotoğraf kitaplığınıza ihtiyaç duyar.",
           "cameraPermission": "Arka Plan, fotoğraf çekmek için kameranıza ihtiyaç duyar."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Arka Plan, sonuç görsellerini galerinize kaydetmek için fotoğraf kitaplığınıza ihtiyaç duyar."
         }
       ]
     ]
