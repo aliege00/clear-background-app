@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Arka Plan",
+    "slug": "arka-plan",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F14"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.arkaplan.app",
+      "config": {
+        "googleMobileAdsAppId": "ca-app-pub-3940256099942544~1458002511"
+      },
+      "infoPlist": {
+        "NSCameraUsageDescription": "Arka Plan, fotoğraf çekmek için kameranıza ihtiyaç duyar.",
+        "NSPhotoLibraryUsageDescription": "Arka Plan, galerinizden fotoğraf seçmek için fotoğraf kitaplığınıza ihtiyaç duyar."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F0F14"
+      },
+      "package": "com.arkaplan.app",
+      "config": {
+        "googleMobileAdsAppId": "ca-app-pub-3940256099942544~3347511713"
+      },
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE"]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Arka Plan, galerinizden fotoğraf seçmek için izin ister.",
+          "cameraPermission": "Arka Plan, fotoğraf çekmek için kameranıza ihtiyaç duyar."
+        }
+      ]
+    ]
+  }
+}
