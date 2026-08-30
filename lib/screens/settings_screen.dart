@@ -1,7 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../services/ad_service.dart';
+import '../services/ad_mob_service.dart';
+import '../services/background_removal_service.dart';
+import '../services/theme_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -11,40 +14,37 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  int _tapCount = 0;
+  int _versionTapCount = 0;
   bool _developerMenuVisible = false;
-  bool _adsEnabled = false;
 
   void _onVersionTap() {
-    _tapCount++;
-    if (_tapCount >= 7) {
+    _versionTapCount++;
+    if (_versionTapCount >= 7) {
       setState(() {
         _developerMenuVisible = !_developerMenuVisible;
-        _tapCount = 0;
+        _versionTapCount = 0;
       });
     }
-  }
-
-  void _onAdsToggle(bool value) {
-    setState(() => _adsEnabled = value);
-    final adService = context.read<AdService>();
-    adService.toggleAds(value);
-    // Trigger ad on setting change (per requirements)
-    adService.onSettingChanged();
+    // 3 saniye sonra sayacı sıfırla
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _versionTapCount = 0);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final adService = context.watch<AdService>();
+    final adService = context.watch<AdMobService>();
+    final bgService = context.watch<BackgroundRemovalService>();
+    final themeProvider = context.watch<ThemeProvider>();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
+          // Başlık
           Text(
             'Ayarlar',
             style: theme.textTheme.headlineSmall?.copyWith(
@@ -61,33 +61,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 28),
 
-          // ── Appearance ──
-          Text(
-            'Görünüm',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          // ── Tema Seçimi ──
+          _sectionTitle('Görünüm', isDark),
           const SizedBox(height: 12),
-          _buildThemeOptions(context, isDark),
-
+          _buildThemeSelector(context, isDark, themeProvider),
           const SizedBox(height: 28),
 
-          // ── About ──
-          Text(
-            'Hakkında',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          // ── Hakkında ──
+          _sectionTitle('Hakkında', isDark),
           const SizedBox(height: 12),
-          _buildAboutSection(context, isDark),
-
+          _buildAboutSection(context, isDark, bgService),
           const SizedBox(height: 28),
 
-          // ── Developer Menu (Hidden) ──
+          // ── Gizli Geliştirici Menüsü ──
           if (_developerMenuVisible) ...[
-            _buildDeveloperMenu(context, isDark, adService),
+            _buildDeveloperMenu(context, isDark, adService, bgService),
             const SizedBox(height: 28),
           ],
         ],
@@ -95,75 +83,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Theme Options ──
+  Widget _sectionTitle(String text, bool isDark) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 13, fontWeight: FontWeight.w600,
+        color: isDark ? Colors.white70 : Colors.black87,
+      ),
+    );
+  }
 
-  Widget _buildThemeOptions(BuildContext context, bool isDark) {
-    final themeOptions = [
-      _ThemeOption(
-        icon: Icons.light_mode_outlined,
-        label: 'Aydınlık',
-        value: ThemeMode.light,
-      ),
-      _ThemeOption(
-        icon: Icons.dark_mode_outlined,
-        label: 'Karanlık',
-        value: ThemeMode.dark,
-      ),
-      _ThemeOption(
-        icon: Icons.brightness_auto_outlined,
-        label: 'Sistem',
-        value: ThemeMode.system,
-      ),
+  // ══════════════════════════════════════════════════════════
+  // TEMA SEÇİMİ
+  // ══════════════════════════════════════════════════════════
+
+  Widget _buildThemeSelector(
+    BuildContext context,
+    bool isDark,
+    ThemeProvider themeProvider,
+  ) {
+    final options = [
+      (Icons.light_mode_outlined, 'Aydınlık', ThemeMode.light),
+      (Icons.dark_mode_outlined, 'Karanlık', ThemeMode.dark),
+      (Icons.brightness_auto_outlined, 'Sistem', ThemeMode.system),
     ];
 
-    final currentMode = Theme.of(context).platform == TargetPlatform.android ||
-            Theme.of(context).platform == TargetPlatform.iOS
-        ? ThemeMode.system // Default
-        : ThemeMode.system;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.02),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.06)
-              : Colors.black.withOpacity(0.06),
-        ),
-      ),
+    return _card(
+      isDark,
       child: Column(
-        children: List.generate(themeOptions.length, (i) {
-          final opt = themeOptions[i];
-          final isSelected = i == 2; // Default to "System"
+        children: List.generate(options.length, (i) {
+          final (icon, label, mode) = options[i];
+          final isSelected = themeProvider.themeMode == mode;
           return GestureDetector(
-            onTap: () {
-              // Theme switching would use a ThemeProvider
-              // For now, this is the UI shell
-            },
+            onTap: () => themeProvider.setThemeMode(mode),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                border: i < themeOptions.length - 1
-                    ? Border(
+              decoration: i < options.length - 1
+                  ? BoxDecoration(
+                      border: Border(
                         bottom: BorderSide(
                           color: isDark
                               ? Colors.white.withOpacity(0.04)
                               : Colors.black.withOpacity(0.04),
                         ),
-                      )
-                    : null,
-              ),
+                      ),
+                    )
+                  : null,
               child: Row(
                 children: [
-                  Icon(
-                    opt.icon,
-                    size: 18,
-                    color: isDark ? Colors.white54 : Colors.black38,
-                  ),
+                  Icon(icon, size: 18, color: isDark ? Colors.white54 : Colors.black38),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      opt.label,
+                      label,
                       style: TextStyle(
                         fontSize: 14,
                         color: isDark ? Colors.white70 : Colors.black87,
@@ -172,17 +144,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   if (isSelected)
                     Container(
-                      width: 20,
-                      height: 20,
+                      width: 20, height: 20,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF1A1A2E),
-                        shape: BoxShape.circle,
+                        color: Color(0xFF1A1A2E), shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.check,
-                        size: 12,
-                        color: Colors.white,
-                      ),
+                      child: const Icon(Icons.check, size: 12, color: Colors.white),
                     ),
                 ],
               ),
@@ -193,50 +159,193 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── About Section ──
+  // ══════════════════════════════════════════════════════════
+  // HAKKINDA
+  // ══════════════════════════════════════════════════════════
 
-  Widget _buildAboutSection(BuildContext context, bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.02),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.06)
-              : Colors.black.withOpacity(0.06),
-        ),
-      ),
+  Widget _buildAboutSection(
+    BuildContext context,
+    bool isDark,
+    BackgroundRemovalService bgService,
+  ) {
+    return _card(
+      isDark,
       child: Column(
         children: [
-          _buildInfoRow(
-            icon: Icons.info_outline,
-            label: 'Sürüm',
-            value: '1.0.0',
+          _infoRow(
+            Icons.info_outline, 'Sürüm', 'v1.0.0',
             onTap: _onVersionTap,
             isDark: isDark,
           ),
-          _buildInfoRow(
-            icon: Icons.phone_iphone,
-            label: 'İşlem',
-            value: '%100 Cihaz Üzerinde',
+          _infoRow(
+            Icons.phone_iphone, 'İşlem', '%100 Cihaz Üzerinde',
             isDark: isDark,
           ),
-          _buildInfoRow(
-            icon: Icons.psychology_outlined,
-            label: 'Yapay Zeka Modeli',
-            value: 'ONNX Runtime',
+          _infoRow(
+            Icons.psychology_outlined, 'AI Model', bgService.modelName,
             isDark: isDark,
-            isLast: true,
+          ),
+          _infoRow(
+            Icons.grid_on, 'Model Çözünürlüğü', bgService.modelInputSize,
+            isDark: isDark, isLast: true,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoRow({
-    required IconData icon,
-    required String label,
-    required String value,
+  // ══════════════════════════════════════════════════════════
+  // GİZLİ GELİŞTİRİCİ MENÜSÜ
+  // ══════════════════════════════════════════════════════════
+
+  Widget _buildDeveloperMenu(
+    BuildContext context,
+    bool isDark,
+    AdMobService adService,
+    BackgroundRemovalService bgService,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.code, size: 16, color: Colors.amber.shade600),
+            const SizedBox(width: 6),
+            Text(
+              'Geliştirici Menüsü',
+              style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w600,
+                color: Colors.amber.shade600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.amber.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.amber.withOpacity(0.15)),
+          ),
+          child: Column(
+            children: [
+              // ── Reklam Durumu ──
+              _devRow(
+                icon: Icons.ad_units_outlined,
+                label: 'Reklam Durumu',
+                trailing: AdMobService.isAdPlatform
+                    ? Switch(
+                        value: adService.adsEnabled,
+                        onChanged: (v) {
+                          adService.toggleAds(v);
+                          // Ayar değişti → reklam tetikle
+                          adService.onSettingChanged();
+                        },
+                      )
+                    : Text(
+                        'Bu platformda\nreklam desteklenmiyor',
+                        textAlign: TextAlign.end,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark ? Colors.white38 : Colors.black26,
+                        ),
+                      ),
+                isDark: isDark,
+              ),
+
+              // ── RAM Kullanımı ──
+              _devRow(
+                icon: Icons.memory,
+                label: 'RAM Kullanımı',
+                trailing: FutureBuilder<int>(
+                  future: _getRamUsage(),
+                  builder: (ctx, snap) {
+                    final mb = snap.data != null
+                        ? '${(snap.data! / 1024 / 1024).toStringAsFixed(1)} MB'
+                        : '—';
+                    return Text(
+                      mb,
+                      style: TextStyle(
+                        fontSize: 12, fontFamily: 'monospace',
+                        color: isDark ? Colors.white38 : Colors.black26,
+                      ),
+                    );
+                  },
+                ),
+                isDark: isDark,
+              ),
+
+              // ── Model Bilgisi ──
+              _devRow(
+                icon: Icons.data_usage,
+                label: 'Model Bilgisi',
+                trailing: Text(
+                  '${bgService.modelName}\n${bgService.modelQuantization}',
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    fontSize: 11, fontFamily: 'monospace',
+                    color: isDark ? Colors.white38 : Colors.black26,
+                  ),
+                ),
+                isDark: isDark,
+              ),
+
+              // ── Önbellek Temizle ──
+              _devRow(
+                icon: Icons.delete_outline,
+                label: 'Önbelleği Temizle',
+                trailing: Icon(
+                  Icons.chevron_right, size: 18,
+                  color: isDark ? Colors.white26 : Colors.black12,
+                ),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Önbellek temizlendi')),
+                  );
+                },
+                isDark: isDark, isLast: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Cihazın tahmini RAM kullanımını döndürür.
+  Future<int> _getRamUsage() async {
+    try {
+      const channel = MethodChannel('com.arkaplan.app/memory');
+      final result = await channel.invokeMethod<int>('getRamUsage');
+      return result ?? 0;
+    } catch (e) {
+      // Platform kanalı yoksa tahmini değer
+      return ProcessInfo.currentRss;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ORTAK WIDGET'LAR
+  // ══════════════════════════════════════════════════════════
+
+  Widget _card(bool isDark, {required Widget child}) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.02),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.06),
+        ),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _infoRow(
+    IconData icon,
+    String label,
+    String value, {
     VoidCallback? onTap,
     required bool isDark,
     bool isLast = false,
@@ -259,11 +368,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : null,
         child: Row(
           children: [
-            Icon(
-              icon,
-              size: 18,
-              color: isDark ? Colors.white54 : Colors.black38,
-            ),
+            Icon(icon, size: 18, color: isDark ? Colors.white54 : Colors.black38),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -277,8 +382,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text(
               value,
               style: TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
+                fontSize: 12, fontFamily: 'monospace',
                 color: isDark ? Colors.white38 : Colors.black38,
               ),
             ),
@@ -288,85 +392,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Developer Menu ──
-
-  Widget _buildDeveloperMenu(BuildContext context, bool isDark, AdService adService) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              Icons.code,
-              size: 16,
-              color: Colors.amber.shade600,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              'Geliştirici Menüsü',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.amber.shade600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.amber.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.amber.withOpacity(0.15)),
-          ),
-          child: Column(
-            children: [
-              // Ad toggle — platform-aware
-              _buildDeveloperRow(
-                icon: Icons.ad_units_outlined,
-                label: 'Reklamları Aç/Kapat',
-                trailing: adService.isWindows
-                    ? Text(
-                        Platform.isWindows
-                            ? 'Bu platformda\nkullanılamaz'
-                            : '',
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: isDark ? Colors.white38 : Colors.black26,
-                        ),
-                      )
-                    : Switch(
-                        value: _adsEnabled,
-                        onChanged: _onAdsToggle,
-                      ),
-                isDark: isDark,
-              ),
-              // Cache clear
-              _buildDeveloperRow(
-                icon: Icons.delete_outline,
-                label: 'Önbelleği Temizle',
-                trailing: Icon(
-                  Icons.chevron_right,
-                  size: 18,
-                  color: isDark ? Colors.white26 : Colors.black12,
-                ),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Önbellek temizlendi')),
-                  );
-                },
-                isDark: isDark,
-                isLast: true,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDeveloperRow({
+  Widget _devRow({
     required IconData icon,
     required String label,
     required Widget trailing,
@@ -388,11 +414,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : null,
         child: Row(
           children: [
-            Icon(
-              icon,
-              size: 18,
-              color: isDark ? Colors.white54 : Colors.black38,
-            ),
+            Icon(icon, size: 18, color: isDark ? Colors.white54 : Colors.black38),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -409,16 +431,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-}
-
-class _ThemeOption {
-  final IconData icon;
-  final String label;
-  final ThemeMode value;
-
-  const _ThemeOption({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
 }

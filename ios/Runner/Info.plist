@@ -35,19 +35,19 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 
-	<!-- Camera permission -->
+	<!-- Kamera izni -->
 	<key>NSCameraUsageDescription</key>
 	<string>Arka Plan, fotoğraf çekmek için kameranıza ihtiyaç duyar.</string>
 
-	<!-- Photo Library permission -->
+	<!-- Galeri izni -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Arka Plan, galerinizden fotoğraf seçmek için fotoğraf kitaplığınıza ihtiyaç duyar.</string>
 
-	<!-- AdMob — Google's TEST Application ID (required for test ads on iOS) -->
+	<!-- AdMob: Google'ın resmi TEST Application ID'si (iOS) -->
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-3940256099942544~1458002511</string>
 
-	<!-- SkAdNetworkItems for AdMob -->
+	<!-- SkAdNetwork — AdMob için gerekli -->
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>

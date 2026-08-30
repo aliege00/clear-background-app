@@ -15,6 +15,4 @@ add_executable(${BINARY_NAME}
 
 add_subdirectory("${FLUTTER_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/flutter")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
-target_include_directories(${BINARY_NAME} PRIVATE
-  "${CMAKE_SOURCE_DIR}"
-)
+target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

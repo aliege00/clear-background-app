@@ -1,43 +1,42 @@
-# Segmentation Model
+# Segmentasyon Modeli
 
-Place your ONNX segmentation model file at this location:
+Uygulama TFLite formatında genel amaçlı segmentasyon modeli kullanır.
+
+Dosyayı şu konuma yerleştirin:
 
 ```
-assets/models/segmentation.onnx
+assets/models/u2net_lite.tflite
 ```
 
-## Recommended Models
+## Önerilen Modeller (TFLite Format)
 
-For **general object/product segmentation** (not just people):
+### U2Net-Lite (Tavsiye edilen)
+- Model: U2Net genel segmentasyon — insan, hayvan, ürün, nesne
+- Boyut: ~4.7 MB (quantized/int8)
+- Çıktı: 1×512×512×1 (alfa maskesi)
+- Dönüştürme: `u2net → TFLite converter`
 
-### Option 1: RMBG-1.4 (BriaAI)
-- Download: https://huggingface.co/briaai/RMBG-1.4
-- Size: ~170MB
-- Quality: Excellent for all object types
+### MODNet-Lite (Alternatif)
+- Model: Portrait matting — özellikle insan/giyim
+- Boyut: ~3.4 MB
+- Çıktı: 1×512×512×1
 
-### Option 2: U2Net (General)
-- Download: https://github.com/danielgatis/rembg
-- Size: ~4.7MB (U2Net-tiny)
-- Quality: Good, works on people + objects
-
-### Option 3: IS-Net
-- Download: https://github.com/xuebinqin/DIS
-- Size: ~25MB
-- Quality: Very good for general segmentation
-
-## Converting to ONNX
-
-If your model is in PyTorch (.pth) format:
+## TFLite Dönüştürme (Örnek)
 
 ```python
-import torch
-model = YourModel.load_from_checkpoint("model.pth")
-dummy = torch.randn(1, 3, 512, 512)
-torch.onnx.export(model, dummy, "segmentation.onnx", opset_version=11)
+import tensorflow as tf
+
+converter = tf.lite.TFLiteConverter.from_saved_model("u2net_savedmodel")
+converter.optimizations = [tf.lite.Optimize.DEFAULT]  # quantize
+tflite_model = converter.convert()
+
+with open("u2net_lite.tflite", "wb") as f:
+    f.write(tflite_model)
 ```
 
-## Model Requirements
+## Model Gereksinimleri
 
-- Input: `[1, 3, 512, 512]` float32 tensor (normalized 0-1)
-- Output: `[1, 1, 512, 512]` float32 mask (0=background, 1=foreground)
-- The app resizes input to 512×512 and maps the mask back to original resolution
+- Girdi: `[1, 512, 512, 3]` Float32 tensör (0–1 normalize)
+- Çıktı: `[1, 512, 512, 1]` Float32 maske (0=arka plan, 1=ön plan)
+- Uygulama girdiyi 1024px'ye küçültüp modele verir,
+  maskeyi orijinal çözünürlüğe geri haritalandırır.
