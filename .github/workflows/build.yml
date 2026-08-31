@@ -21,13 +21,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup Expo CLI
         run: npm install -g eas-cli
 
-      - name: Install dependencies
-        run: npm install
+      - name: Delete stale lockfile and reinstall
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Expo login
         run: eas login --non-interactive
@@ -112,13 +113,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup Expo CLI
         run: npm install -g eas-cli
 
-      - name: Install dependencies
-        run: npm install
+      - name: Delete stale lockfile and reinstall
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Expo login
         run: eas login --non-interactive
